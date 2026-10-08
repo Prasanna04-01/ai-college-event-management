@@ -1,71 +1,126 @@
 import json
+import boto3
+from decimal import Decimal
+
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table("Users")
+
+
+def convert_decimals(obj):
+
+    if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+
+    if isinstance(obj, dict):
+        return {
+            key: convert_decimals(value)
+            for key, value in obj.items()
+        }
+
+    if isinstance(obj, list):
+        return [
+            convert_decimals(value)
+            for value in obj
+        ]
+
+    return obj
 
 
 def lambda_handler(event, context):
 
     try:
-        # Get userId from query parameter
-        query_params = event.get("queryStringParameters") or {}
-        user_id = query_params.get("userId")
 
-        # Get data sent in request body
-        body = event.get("body", {})
+        query_parameters = event.get("queryStringParameters") or {}
+        user_id = query_parameters.get("userId")
 
-        if isinstance(body, str):
-            body = json.loads(body)
-
-        # Check userId
         if not user_id:
             return {
                 "statusCode": 400,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
                 "body": json.dumps({
                     "success": False,
                     "message": "userId is required"
                 })
             }
 
-        # Check that at least one field is provided
-        allowed_fields = [
-            "name",
-            "department",
-            "year",
-            "skills",
-            "interests"
-        ]
+        body = json.loads(event.get("body", "{}"))
 
-        updated_fields = {
-            field: body[field]
-            for field in allowed_fields
-            if field in body
-        }
+        # Check user exists
+        existing = table.get_item(
+            Key={
+                "UserID": user_id
+            }
+        )
 
-        if not updated_fields:
+        if "Item" not in existing:
             return {
-                "statusCode": 400,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
+                "statusCode": 404,
                 "body": json.dumps({
                     "success": False,
-                    "message": "No profile information provided for update"
+                    "message": "User not found"
                 })
             }
 
-        # Temporary response
-        # Database update will be connected later
+        allowed_fields = [
+            "Name",
+            "Department",
+            "Year",
+            "Skills",
+            "Interests"
+        ]
+
+        update_parts = []
+        expression_names = {}
+        expression_values = {}
+
+        for field in allowed_fields:
+
+            if field in body:
+
+                name_key = "#" + field
+                value_key = ":" + field
+
+                expression_names[name_key] = field
+                expression_values[value_key] = body[field]
+
+                update_parts.append(
+                    f"{name_key} = {value_key}"
+                )
+
+        if not update_parts:
+
+            return {
+                "statusCode": 400,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "No valid fields provided for update"
+                })
+            }
+
+        response = table.update_item(
+            Key={
+                "UserID": user_id
+            },
+            UpdateExpression="SET " + ", ".join(update_parts),
+            ExpressionAttributeNames=expression_names,
+            ExpressionAttributeValues=expression_values,
+            ReturnValues="ALL_NEW"
+        )
+
+        user = response["Attributes"]
+
+        user.pop("Password", None)
+        user.pop("PasswordHash", None)
+
+        user = convert_decimals(user)
+
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": True,
-                "message": "Profile update request received successfully",
-                "userId": user_id,
-                "updatedFields": updated_fields
+                "message": "Profile updated successfully",
+                "user": user
             })
         }
 
@@ -73,12 +128,8 @@ def lambda_handler(event, context):
 
         return {
             "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }

@@ -1,87 +1,87 @@
 import json
+import boto3
+import uuid
+from datetime import datetime
+
+dynamodb = boto3.resource("dynamodb")
+
+registrations_table = dynamodb.Table("Registrations")
+events_table = dynamodb.Table("Events")
 
 
 def lambda_handler(event, context):
 
     try:
-        # Get data sent to Lambda
-        body = event.get("body", {})
+        path_parameters = event.get("pathParameters") or {}
+        event_id = path_parameters.get("eventId")
 
-        # API Gateway may send body as a JSON string
-        if isinstance(body, str):
-            body = json.loads(body)
-
-        # Required fields
-        required_fields = [
-            "name",
-            "email",
-            "password",
-            "department",
-            "year"
-        ]
-
-        # Check for missing fields
-        missing_fields = [
-            field for field in required_fields
-            if not body.get(field)
-        ]
-
-        if missing_fields:
+        if not event_id:
             return {
                 "statusCode": 400,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
                 "body": json.dumps({
                     "success": False,
-                    "message": "Missing required fields",
-                    "fields": missing_fields
+                    "message": "eventId is required"
                 })
             }
 
-        # Get user information
-        name = body["name"]
-        email = body["email"]
-        password = body["password"]
-        department = body["department"]
-        year = body["year"]
+        body = json.loads(event.get("body", "{}"))
 
-        # Optional fields
-        skills = body.get("skills", [])
-        interests = body.get("interests", [])
+        user_id = body.get("userId")
 
-        # Backend response
-        response = {
-            "success": True,
-            "message": "User registration data received successfully",
-            "user": {
-                "name": name,
-                "email": email,
-                "department": department,
-                "year": year,
-                "skills": skills,
-                "interests": interests
+        if not user_id:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "userId is required"
+                })
             }
+
+        # Check whether event exists
+        event_response = events_table.get_item(
+            Key={
+                "EventID": event_id
+            }
+        )
+
+        if "Item" not in event_response:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "Event not found"
+                })
+            }
+
+        registration_id = "REG" + uuid.uuid4().hex[:8].upper()
+
+        registration_item = {
+            "RegistrationID": registration_id,
+            "UserID": user_id,
+            "EventID": event_id,
+            "RegistrationDate": datetime.utcnow().isoformat(),
+            "Status": "Registered"
         }
+
+        registrations_table.put_item(
+            Item=registration_item
+        )
 
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json"
-            },
-            "body": json.dumps(response)
+            "body": json.dumps({
+                "success": True,
+                "message": "Event registration successful",
+                "registration": registration_item
+            })
         }
 
     except Exception as e:
 
         return {
             "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }

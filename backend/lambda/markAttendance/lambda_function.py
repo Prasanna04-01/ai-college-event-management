@@ -1,53 +1,87 @@
 import json
+import boto3
+import uuid
+from datetime import datetime
+
+dynamodb = boto3.resource("dynamodb")
+
+attendance_table = dynamodb.Table("Attendance")
+events_table = dynamodb.Table("Events")
+
 
 def lambda_handler(event, context):
 
     try:
-        body = event.get("body")
+        path_parameters = event.get("pathParameters") or {}
+        event_id = path_parameters.get("eventId")
 
-        if isinstance(body, str):
-            body = json.loads(body)
-
-        if not body:
-            return {
-                "statusCode": 400,
-                "body": json.dumps({
-                    "success": False,
-                    "message": "Request body is required"
-                })
-            }
+        body = json.loads(event.get("body", "{}"))
 
         user_id = body.get("userId")
-        event_id = body.get("eventId")
-        status = body.get("status", "Present")
 
-        if not user_id or not event_id:
+        if not event_id:
             return {
                 "statusCode": 400,
                 "body": json.dumps({
                     "success": False,
-                    "message": "userId and eventId are required"
+                    "message": "eventId is required"
                 })
             }
 
-        # Attendance database logic will be added later
+        if not user_id:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "userId is required"
+                })
+            }
+
+        # Check whether event exists
+        event_response = events_table.get_item(
+            Key={
+                "EventID": event_id
+            }
+        )
+
+        if "Item" not in event_response:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "Event not found"
+                })
+            }
+
+        attendance_id = "ATT" + uuid.uuid4().hex[:8].upper()
+
+        attendance_item = {
+            "AttendanceID": attendance_id,
+            "UserID": user_id,
+            "EventID": event_id,
+            "ScanTime": datetime.utcnow().isoformat(),
+            "Status": "Present"
+        }
+
+        attendance_table.put_item(
+            Item=attendance_item
+        )
+
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "success": True,
                 "message": "Attendance marked successfully",
-                "userId": user_id,
-                "eventId": event_id,
-                "status": status
+                "attendance": attendance_item
             })
         }
 
     except Exception as e:
+
         return {
             "statusCode": 500,
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }

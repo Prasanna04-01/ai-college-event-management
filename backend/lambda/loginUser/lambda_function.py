@@ -1,43 +1,55 @@
 import json
+import boto3
+
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table("Users")
 
 
 def lambda_handler(event, context):
 
     try:
-        # Get request body
-        body = event.get("body", {})
+        body = json.loads(event.get("body", "{}"))
 
-        # API Gateway sends body as a JSON string
-        if isinstance(body, str):
-            body = json.loads(body)
-
-        # Required fields
         email = body.get("email")
         password = body.get("password")
 
-        # Check required fields
         if not email or not password:
             return {
                 "statusCode": 400,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
                 "body": json.dumps({
                     "success": False,
                     "message": "Email and password are required"
                 })
             }
 
-        # Login request received successfully
+        response = table.scan()
+
+        users = response.get("Items", [])
+
+        for user in users:
+
+            if (
+                user.get("Email") == email
+                and user.get("Password") == password
+            ):
+
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "success": True,
+                        "message": "Login successful",
+                        "UserID": user.get("UserID"),
+                        "Name": user.get("Name"),
+                        "Email": user.get("Email"),
+                        "Role": user.get("Role")
+                    })
+                }
+
         return {
-            "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json"
-            },
+            "statusCode": 401,
             "body": json.dumps({
-                "success": True,
-                "message": "Login request received successfully",
-                "email": email
+                "success": False,
+                "message": "Invalid email or password"
             })
         }
 
@@ -45,13 +57,8 @@ def lambda_handler(event, context):
 
         return {
             "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }
-        

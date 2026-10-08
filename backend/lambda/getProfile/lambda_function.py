@@ -1,47 +1,77 @@
 import json
+import boto3
+from decimal import Decimal
+
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table("Users")
+
+
+def convert_decimals(obj):
+
+    if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+
+    if isinstance(obj, dict):
+        return {
+            key: convert_decimals(value)
+            for key, value in obj.items()
+        }
+
+    if isinstance(obj, list):
+        return [
+            convert_decimals(value)
+            for value in obj
+        ]
+
+    return obj
 
 
 def lambda_handler(event, context):
 
     try:
-        # Get userId from query parameter
-        query_params = event.get("queryStringParameters") or {}
-        user_id = query_params.get("userId")
 
-        # Check if userId was provided
+        query_parameters = event.get("queryStringParameters") or {}
+        user_id = query_parameters.get("userId")
+
         if not user_id:
             return {
                 "statusCode": 400,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
                 "body": json.dumps({
                     "success": False,
                     "message": "userId is required"
                 })
             }
 
-        # Temporary profile data
-        # Database connection will be added later
-        profile = {
-            "userId": user_id,
-            "name": "Test Student",
-            "email": "test@gmail.com",
-            "department": "Information Technology",
-            "year": 3,
-            "skills": ["Python", "AWS"],
-            "interests": ["AI", "Cloud Computing"]
-        }
+        response = table.get_item(
+            Key={
+                "UserID": user_id
+            }
+        )
+
+        if "Item" not in response:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "User not found"
+                })
+            }
+
+        user = response["Item"]
+
+        user.pop("Password", None)
+        user.pop("PasswordHash", None)
+
+        user = convert_decimals(user)
 
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": True,
                 "message": "Profile retrieved successfully",
-                "profile": profile
+                "user": user
             })
         }
 
@@ -49,12 +79,8 @@ def lambda_handler(event, context):
 
         return {
             "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }

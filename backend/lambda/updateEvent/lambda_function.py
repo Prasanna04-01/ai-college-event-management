@@ -1,13 +1,42 @@
 import json
+import boto3
+from decimal import Decimal
+
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table("Events")
+
+
+def convert_decimals(obj):
+
+    if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+
+    if isinstance(obj, dict):
+        return {
+            key: convert_decimals(value)
+            for key, value in obj.items()
+        }
+
+    if isinstance(obj, list):
+        return [
+            convert_decimals(value)
+            for value in obj
+        ]
+
+    return obj
+
 
 def lambda_handler(event, context):
 
     try:
-        # Get eventId from URL
+
         path_parameters = event.get("pathParameters") or {}
         event_id = path_parameters.get("eventId")
 
         if not event_id:
+
             return {
                 "statusCode": 400,
                 "body": json.dumps({
@@ -16,68 +45,103 @@ def lambda_handler(event, context):
                 })
             }
 
-        # Get update data from request body
-        body = event.get("body")
+        body = json.loads(
+            event.get("body", "{}")
+        )
 
-        if isinstance(body, str):
-            body = json.loads(body)
+        existing = table.get_item(
+            Key={
+                "EventID": event_id
+            }
+        )
 
-        if not body:
+        if "Item" not in existing:
+
+            return {
+                "statusCode": 404,
+                "body": json.dumps({
+                    "success": False,
+                    "message": "Event not found"
+                })
+            }
+
+        allowed_fields = {
+            "eventName": "EventName",
+            "description": "Description",
+            "category": "Category",
+            "date": "Date",
+            "time": "Time",
+            "venue": "Venue",
+            "capacity": "Capacity",
+            "organizer": "Organizer",
+            "registrationDeadline": "RegistrationDeadline",
+            "status": "Status",
+            "imageURL": "ImageURL"
+        }
+
+        update_parts = []
+        expression_values = {}
+        expression_names = {}
+
+        for input_field, dynamo_field in allowed_fields.items():
+
+            if input_field in body:
+
+                name_key = "#" + dynamo_field
+                value_key = ":" + dynamo_field
+
+                expression_names[name_key] = dynamo_field
+
+                value = body[input_field]
+
+                if input_field == "capacity":
+                    value = int(value)
+
+                expression_values[value_key] = value
+
+                update_parts.append(
+                    f"{name_key} = {value_key}"
+                )
+
+        if not update_parts:
+
             return {
                 "statusCode": 400,
                 "body": json.dumps({
                     "success": False,
-                    "message": "Update data is required"
+                    "message": "No fields provided for update"
                 })
             }
 
-        # Fields that can be updated
-        allowed_fields = [
-            "eventName",
-            "description",
-            "category",
-            "date",
-            "time",
-            "venue",
-            "capacity",
-            "organizer",
-            "registrationDeadline",
-            "status",
-            "imageURL"
-        ]
+        response = table.update_item(
+            Key={
+                "EventID": event_id
+            },
+            UpdateExpression="SET " + ", ".join(update_parts),
+            ExpressionAttributeNames=expression_names,
+            ExpressionAttributeValues=expression_values,
+            ReturnValues="ALL_NEW"
+        )
 
-        updated_fields = {}
+        updated_event = convert_decimals(
+            response["Attributes"]
+        )
 
-        for field in allowed_fields:
-            if field in body:
-                updated_fields[field] = body[field]
-
-        if not updated_fields:
-            return {
-                "statusCode": 400,
-                "body": json.dumps({
-                    "success": False,
-                    "message": "No valid fields provided for update"
-                })
-            }
-
-        # Database update will be added later
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "success": True,
-                "message": "Event update request received successfully",
-                "eventId": event_id,
-                "updatedFields": updated_fields
+                "message": "Event updated successfully",
+                "event": updated_event
             })
         }
 
     except Exception as e:
+
         return {
             "statusCode": 500,
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }

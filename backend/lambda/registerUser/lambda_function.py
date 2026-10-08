@@ -1,87 +1,56 @@
 import json
+import boto3
+import uuid
+
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table("Users")
 
 
 def lambda_handler(event, context):
 
     try:
-        # Get data sent to Lambda
-        body = event.get("body", {})
+        body = json.loads(event.get("body", "{}"))
 
-        # API Gateway may send body as a JSON string
-        if isinstance(body, str):
-            body = json.loads(body)
+        name = body.get("name")
+        email = body.get("email")
+        password = body.get("password")
 
-        # Required fields
-        required_fields = [
-            "name",
-            "email",
-            "password",
-            "department",
-            "year"
-        ]
-
-        # Check for missing fields
-        missing_fields = [
-            field for field in required_fields
-            if not body.get(field)
-        ]
-
-        if missing_fields:
+        if not name or not email or not password:
             return {
                 "statusCode": 400,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
                 "body": json.dumps({
                     "success": False,
-                    "message": "Missing required fields",
-                    "fields": missing_fields
+                    "message": "Name, email and password are required"
                 })
             }
 
-        # Get user information
-        name = body["name"]
-        email = body["email"]
-        password = body["password"]
-        department = body["department"]
-        year = body["year"]
+        user_id = "USER" + uuid.uuid4().hex[:8].upper()
 
-        # Optional fields
-        skills = body.get("skills", [])
-        interests = body.get("interests", [])
-
-        # Backend response
-        response = {
-            "success": True,
-            "message": "User registration data received successfully",
-            "user": {
-                "name": name,
-                "email": email,
-                "department": department,
-                "year": year,
-                "skills": skills,
-                "interests": interests
-            }
+        user_item = {
+            "UserID": user_id,
+            "Name": name,
+            "Email": email,
+            "Password": password,
+            "Role": "USER"
         }
+
+        table.put_item(Item=user_item)
 
         return {
             "statusCode": 200,
-            "headers": {
-                "Content-Type": "application/json"
-            },
-            "body": json.dumps(response)
+            "body": json.dumps({
+                "success": True,
+                "message": "User registered successfully",
+                "UserID": user_id
+            })
         }
 
     except Exception as e:
 
         return {
             "statusCode": 500,
-            "headers": {
-                "Content-Type": "application/json"
-            },
             "body": json.dumps({
                 "success": False,
-                "message": "Internal server error",
-                "error": str(e)
+                "message": str(e)
             })
         }
